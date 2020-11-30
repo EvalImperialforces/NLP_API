@@ -1,5 +1,5 @@
 from tfidf import tfidf
-from esrc_bert import bert
+from esrc_bert import bert_answers
 from flask import jsonify, request
 from flask import Flask
 import json
@@ -30,8 +30,9 @@ def esrc_bert():
     
     try:
         question = request.json['esrc_question']
+        no_answers = request.json['no_answers']
         
-        return bert(question)
+        return bert_answers(question, no_answers)
     except:
         return 'Question not submitted'
 

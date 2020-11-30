@@ -1,5 +1,13 @@
+import re
+import collections
 import torch
 import json
+import pickle
+import transformers
+from transformers import AutoTokenizer, AutoModelForQuestionAnswering
+from tfidf import tfidf
+
+########### Model Load ############
 
 model_path = "resources/bertQA_model"
 tokenizer_path = "resources/bertQA_tokenizer"
@@ -7,62 +15,114 @@ tokenizer_path = "resources/bertQA_tokenizer"
 model = torch.load(model_path)
 tokenizer = torch.load(tokenizer_path)
 
-text = "Customers require the authorization object LICAUD_CLO on their S-user id in order to access the Licenses information. SAP colleagues can access this information without further authorization. The license utilization data is updated every day at around 9:00 (CET) from the License Utilization Information Application (LUI) and loads the data for the last 30 days including the actual day, in this way if certain data was missed/incorrect on a certain day over the last 30 days, the daily update will correct this data. Note: the LUI also has a refresh schedule that you should confirm if needing to have that granularity. Some metrics are only displayed internally. The reason for this is the external version of the cockpit should align with the LUI tool and the internal tool should align with the Cloud Reporting Tool. This includes metrics that are unlimited, these are not shown in LUI and therefor will only be seen internally. The chart or table in this subsection shows the license utilization for the different components of your cloud solutions, according to the license metrics applicable to each. All product counts include only valid, non-deleted forms. In order to access Licenses area, the authorization object LICAUD_CLO is required for your S-user id. Reach out to your super administrator if required. You can switch to table-only view to see more details. By clicking one of the metrics on the chart or in the table, you can see the history of the purchased and used licenses in the License Utilization Trend subsection on the right."
+########### ESRC Data seperated into Paragraphs ############
 
-def bert(question):
-    '''
-    Takes a `question` string and an `answer_text` string (which contains the
-    answer), and identifies the words within the `answer_text` that are the
-    answer. Prints them out.
-    '''
-    # ======== Tokenize ========
-    # Apply the tokenizer to the input text, treating them as a text-pair.
-    input_ids = tokenizer.encode(question, text)
+with open("esrc_cloud_data.txt", "rb") as data:
+    data = pickle.load(data)
 
-    # Report how long the input sequence is.
-    #print('Query has {:,} tokens.\n'.format(len(input_ids)))
+########### Model Function ############
 
-    # ======== Set Segment IDs ========
-    # Search the input_ids for the first instance of the `[SEP]` token.
-    sep_index = input_ids.index(tokenizer.sep_token_id)
+class DocumentReader:
+    def __init__(self):
+        #self.READER_PATH = pretrained_model_path
+        self.tokenizer = tokenizer
+        #AutoTokenizer.from_pretrained(self.READER_PATH)
+        self.model = model
+        #AutoModelForQuestionAnswering.from_pretrained(self.READER_PATH)
+        self.max_len = self.model.config.max_position_embeddings
+        self.chunked = False
 
-    # The number of segment A tokens includes the [SEP] token istelf.
-    num_seg_a = sep_index + 1
+    def tokenize(self, question, text):
+        self.inputs = self.tokenizer.encode_plus(question, text, add_special_tokens=True, return_tensors="pt")
+        self.input_ids = self.inputs["input_ids"].tolist()[0]
 
-    # The remainder are segment B.
-    num_seg_b = len(input_ids) - num_seg_a
+        if len(self.input_ids) > self.max_len:
+            self.inputs = self.chunkify()
+            self.chunked = True
 
-    # Construct the list of 0s and 1s.
-    segment_ids = [0]*num_seg_a + [1]*num_seg_b
+    def chunkify(self):
+        """ 
+        Break up a long article into chunks that fit within the max token
+        requirement for that Transformer model. 
 
-    # There should be a segment_id for every input token.
-    assert len(segment_ids) == len(input_ids)
+        Calls to BERT / RoBERTa / ALBERT require the following format:
+        [CLS] question tokens [SEP] context tokens [SEP].
+        """
 
-    # ======== Evaluate ========
-    # Run our example question through the model.
-    start_scores, end_scores = model(torch.tensor([input_ids]), # The tokens representing our input text.
-                                    token_type_ids=torch.tensor([segment_ids])) # The segment IDs to differentiate question from answer_text
+        # create question mask based on token_type_ids
+        # value is 0 for question tokens, 1 for context tokens
+        qmask = self.inputs['token_type_ids'].lt(1)
+        qt = torch.masked_select(self.inputs['input_ids'], qmask)
+        chunk_size = self.max_len - qt.size()[0] - 1 # the "-1" accounts for
+        # having to add an ending [SEP] token to the end
 
-    # ======== Reconstruct Answer ========
-    # Find the tokens with the highest `start` and `end` scores.
-    answer_start = torch.argmax(start_scores)
-    answer_end = torch.argmax(end_scores)
+        # create a dict of dicts; each sub-dict mimics the structure of pre-chunked model input
+        chunked_input = collections.OrderedDict()
+        for k,v in self.inputs.items():
+            q = torch.masked_select(v, qmask)
+            c = torch.masked_select(v, ~qmask)
+            chunks = torch.split(c, chunk_size)
+            
+            for i, chunk in enumerate(chunks):
+                if i not in chunked_input:
+                    chunked_input[i] = {}
 
-    # Get the string versions of the input tokens.
-    tokens = tokenizer.convert_ids_to_tokens(input_ids)
+                thing = torch.cat((q, chunk))
+                if i != len(chunks)-1:
+                    if k == 'input_ids':
+                        thing = torch.cat((thing, torch.tensor([102])))
+                    else:
+                        thing = torch.cat((thing, torch.tensor([1])))
 
-    # Start with the first token.
-    answer = tokens[answer_start]
+                chunked_input[i][k] = torch.unsqueeze(thing, dim=0)
+        return chunked_input
 
-    # Select the remaining answer tokens and join them with whitespace.
-    for i in range(answer_start + 1, answer_end + 1):
-        
-        # If it's a subword token, then recombine it with the previous token.
-        if tokens[i][0:2] == '##':
-            answer += tokens[i][2:]
-        
-        # Otherwise, add a space then the token.
+    def get_answer(self):
+        if self.chunked:
+            answer = ''
+            for k, chunk in self.inputs.items():
+                answer_start_scores, answer_end_scores = self.model(**chunk)
+
+                answer_start = torch.argmax(answer_start_scores)
+                answer_end = torch.argmax(answer_end_scores) + 1
+
+                ans = self.convert_ids_to_string(chunk['input_ids'][0][answer_start:answer_end])
+                if ans != '[CLS]':
+                    answer += ans + " / "
+            return answer
         else:
-            answer += ' ' + tokens[i]
+            answer_start_scores, answer_end_scores = self.model(**self.inputs)
 
-    return json.loads("' + answer + '")
+            answer_start = torch.argmax(answer_start_scores)  # get the most likely beginning of answer with the argmax of the score
+            answer_end = torch.argmax(answer_end_scores) + 1  # get the most likely end of answer with the argmax of the score
+        
+            return self.convert_ids_to_string(self.inputs['input_ids'][0][
+                                              answer_start:answer_end])
+
+    def convert_ids_to_string(self, input_ids):
+        return self.tokenizer.convert_tokens_to_string(self.tokenizer.convert_ids_to_tokens(input_ids))
+
+
+def bert_answers(question, no_answers):
+    # Insert question - tf-idf operation performed first and top n bert answers will be returned
+    pars = tfidf(question, data)
+ 
+    # Select TF-IDF results above threshold.
+    top_results = pars.loc[pars['Match Percentage'] >= 10]
+    top_results = top_results['Paragraph']
+  
+    # Crop results based on those specified in no_answers, unless top_results in less than number specified
+    if len(top_results) > no_answers:
+        crop_results = top_results.head(no_answers)
+    else:
+        crop_results = top_results
+
+    result = []
+    for index, row in crop_results.iteritems():
+        sect = re.findall(r'(\d+(?:\.\d+)?)', row)[0]
+        reader = DocumentReader()
+        text = row
+        reader.tokenize(question, text)
+        result.append("Bert Answer {} from Section {}: {}".format(index+1, sect, reader.get_answer()))
+
+    return json.dumps(result)
