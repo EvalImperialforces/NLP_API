@@ -1,4 +1,4 @@
-from tfidf import tfidf
+from tfidf_assets import tfidf
 from esrc_bert import bert_answers
 from flask import jsonify, request
 from flask import Flask
@@ -12,7 +12,7 @@ app = Flask(__name__)
 
 @app.route("/")
 
-@app.route("/api/tfidf",  methods=['GET', 'POST'])
+@app.route("/api/tfidf_assets",  methods=['GET', 'POST'])
 def best_match_asset():
     
     try:
@@ -24,17 +24,27 @@ def best_match_asset():
         return 'Query not submitted'
 
 
-   
-@app.route("/api/bert", methods=['POST'])
-def esrc_bert():
+@app.route("/api/tfidf_esrc",  methods=['GET', 'POST'])
+def best_match_esrc():
     
     try:
-        question = request.json['esrc_question']
-        no_answers = request.json['no_answers']
+        question = request.json['question']
         
-        return bert_answers(question, no_answers)
+        return tfidf_esrc(question)
+            
     except:
-        return 'Question not submitted'
+        return 'Query not submitted'
+
+   
+#@app.route("/api/bert", methods=['POST'])
+#def esrc_bert():
+#    try:
+#        question = request.json['esrc_question']
+#        no_answers = request.json['no_answers']
+        
+#        return bert_answers(question, no_answers)
+#    except:
+#        return 'Question not submitted'
 
 
 

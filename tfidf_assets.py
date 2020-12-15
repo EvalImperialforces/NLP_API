@@ -15,16 +15,16 @@ ps = LancasterStemmer()
 
 
 cols = ['Default Goal ID','Default Goal Description', 'Default Goal Name', 'Linked Initiatives IDs', 'Value Focus']
-data = pd.read_excel("Goal_Data.xlsx", sep='\t', usecols = cols)
+data = pd.read_excel("resources/Goal_Data.xlsx", sep='\t', usecols = cols)
 data["Default Goal Name"] = data["Default Goal Name"].astype(str)
 data["Description"] = data["Default Goal Description"].astype(str)
 data['DG_NameDesc'] = data[['Default Goal Description', 'Default Goal Name']].agg(' '.join, axis = 1)
 
-data2 = pd.read_excel("Goal_Data.xlsx", sheet_name='Initiatives')
+data2 = pd.read_excel("resources/Goal_Data.xlsx", sheet_name='Initiatives')
 data2['I_NameDesc'] = data2[['Description', 'Initiative Name']].agg(' '.join, axis = 1)
 data2 = data2.fillna(0)
 
-data3 = pd.read_excel("Goal_Data.xlsx", sheet_name='Assets')
+data3 = pd.read_excel("resources/Goal_Data.xlsx", sheet_name='Assets')
 data3["Asset ID"] = data3["Asset ID"].str.replace(" ", "") # Remove spaces
 data3["Asset Name"] = data3["Asset Name"].astype(str)
 data3["Description"] = data3["Description, High"].astype(str)
