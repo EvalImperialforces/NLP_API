@@ -1,8 +1,5 @@
 applications:
 - name: model_server
-  memory: 256MB
+  memory: 2G
   disk_quota: 256MB
-  path: /build
-  command: python main.py
-  buildpacks:
-    - https://github.com/cloudfoundry/python-buildpack
+  random-route: True
