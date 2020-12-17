@@ -1,5 +1,5 @@
 applications:
 - name: model_server
   memory: 2G
-  disk_quota: 256MB
+  disk_quota: 2G
   random-route: True
